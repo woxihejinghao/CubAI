@@ -140,6 +140,8 @@ export function createMainWindow(): BrowserWindow {
 
   // Confirm before close (skip in dev mode)
   let forceClose = false;
+  let closeFlowInProgress = false;
+  const CLOSE_IPC_TIMEOUT_MS = 5000;
 
   // Listen for close confirmation from renderer
   ipcMain.on(IPC_CHANNELS.APP_CLOSE_CONFIRM, (event, confirmed: boolean) => {
@@ -158,7 +160,13 @@ export function createMainWindow(): BrowserWindow {
       return;
     }
 
+    if (closeFlowInProgress) {
+      e.preventDefault();
+      return;
+    }
+
     e.preventDefault();
+    closeFlowInProgress = true;
 
     const requestId = randomUUID();
 
@@ -170,7 +178,7 @@ export function createMainWindow(): BrowserWindow {
         const timeout = setTimeout(() => {
           ipcMain.removeListener(channel, handler);
           resolve(null);
-        }, 60_000);
+        }, CLOSE_IPC_TIMEOUT_MS);
 
         const handler = (event: Electron.IpcMainEvent, ...args: any[]) => {
           const match = predicate(event, ...args);
@@ -184,6 +192,10 @@ export function createMainWindow(): BrowserWindow {
       });
 
     const runCloseFlow = async () => {
+      if (win.isDestroyed() || win.webContents.isDestroyed()) {
+        return;
+      }
+
       win.webContents.send(IPC_CHANNELS.APP_CLOSE_REQUEST, requestId);
 
       const response = await waitFor<{ dirtyPaths: string[] }>(
@@ -265,7 +277,9 @@ export function createMainWindow(): BrowserWindow {
       win.close();
     };
 
-    void runCloseFlow();
+    void runCloseFlow().finally(() => {
+      closeFlowInProgress = false;
+    });
   });
 
   // Open external links in browser

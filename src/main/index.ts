@@ -57,8 +57,10 @@ import { createMainWindow } from './windows/MainWindow';
 let mainWindow: BrowserWindow | null = null;
 let pendingOpenPath: string | null = null;
 let cleanupWindowHandlers: (() => void) | null = null;
+let isQuittingCleanupRunning = false;
 
 const isDev = !app.isPackaged;
+const FORCE_EXIT_TIMEOUT_MS = 8000;
 
 function sanitizeProfileName(input: string): string {
   const trimmed = input.trim();
@@ -601,16 +603,26 @@ app.on('window-all-closed', () => {
 
 // Cleanup before app quits (covers all quit methods: Cmd+Q, window close, etc.)
 app.on('will-quit', (event) => {
+  if (isQuittingCleanupRunning) {
+    return;
+  }
+
   event.preventDefault();
+  isQuittingCleanupRunning = true;
   console.log('[app] Will quit, cleaning up...');
   unwatchClaudeSettings();
   gitAutoFetchService.cleanup();
+
+  const forceExitTimer = setTimeout(() => {
+    console.error('[app] Cleanup timed out, forcing exit');
+    app.exit(0);
+  }, FORCE_EXIT_TIMEOUT_MS);
+
   cleanupAllResources()
     .catch((err) => console.error('[app] Cleanup error:', err))
     .finally(() => {
-      // Remove the listener to allow quit after cleanup
-      app.removeAllListeners('will-quit');
-      app.quit();
+      clearTimeout(forceExitTimer);
+      app.exit(0);
     });
 });
 
